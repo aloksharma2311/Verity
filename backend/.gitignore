@@ -1,0 +1,8 @@
+# Ignore secrets
+.env
+
+# Python junk
+__pycache__/
+venv/
+*.sqlite
+*.db
