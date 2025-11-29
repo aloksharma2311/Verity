@@ -1,42 +1,49 @@
+# backend/app/chat.py
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+
 from .database import get_db
-from .deps import get_current_user
-from .ai_agent import verify_claim
+from .ai_agent import verify_text_claim
 
-from typing import Dict, Any
-
-router = APIRouter()
-
-
-class ChatVerifyRequest:
-    claim: str
+router = APIRouter(
+    prefix="/chat",
+    tags=["chat"],
+)
 
 
-@router.post("/verify")
-async def chat_verify(payload: Dict[str, Any],
-                      db: Session = Depends(get_db),
-                      current_user=Depends(get_current_user)):
+class ChatVerifyRequest(BaseModel):
+    text: str
+
+
+class ChatVerifyResponse(BaseModel):
+    verdict: str
+    score: int
+    bullets: list[str]
+
+
+@router.post("/verify", response_model=ChatVerifyResponse)
+def chat_verify(
+    payload: ChatVerifyRequest,
+    db: Session = Depends(get_db),  # reserved for logging later
+):
     """
-    Chatbot endpoint: user sends a text claim, we verify it.
-    Body: { "claim": "some news text" }
+    Chatbot endpoint: verify a news claim / headline from plain text.
     """
-    claim = payload.get("claim")
-    if not claim:
-        raise HTTPException(status_code=400, detail="Missing 'claim' in request body")
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
 
     try:
-        result = await verify_claim(claim)
+        result = verify_text_claim(payload.text)
     except Exception as e:
-        # In case GNews/LLM fails (no internet, bad key, etc.), don't crash the app.
-        return {
-            "verdict": "Uncertain",
-            "score": 0,
-            "bullets": [
-                "Verification service is temporarily unavailable.",
-                f"Internal error: {str(e)}",
-            ],
-            "article_count": 0,
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"Verification failed: {e}",
+        )
 
-    return result
+    return ChatVerifyResponse(
+        verdict=str(result.get("verdict", "Uncertain")),
+        score=int(result.get("score", 50)),
+        bullets=list(result.get("bullets", [])),
+    )

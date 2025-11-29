@@ -2,25 +2,22 @@
 
 import os
 import json
-import httpx
-from typing import Dict
+from typing import Dict, Any
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_API_BASE = os.getenv("LLM_API_BASE", "https://api.groq.com/openai/v1")
-
-# ✅ FIX: use a current Llama 3.1 model instead of decommissioned ones
-LLM_MODEL = "llama-3.1-8b-instant"
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 
 
-async def analyze_with_llm(prompt: str) -> Dict:
+def analyze_with_llm(prompt: str) -> Dict[str, Any]:
     """
-    Call Groq's OpenAI-compatible chat API.
-    If anything goes wrong (400/401/etc.), return a safe fallback
-    instead of crashing the backend.
+    Call Groq's OpenAI-compatible chat API in a synchronous way.
+    Always returns a dict with keys: verdict, score, bullets.
     """
     if not LLM_API_KEY:
         return {
@@ -43,7 +40,9 @@ async def analyze_with_llm(prompt: str) -> Dict:
                 "role": "system",
                 "content": (
                     "You are a rigorous news verification agent. "
-                    "You MUST respond ONLY with a valid JSON object."
+                    "You MUST respond ONLY with a valid JSON object with keys: "
+                    "verdict (one of: True, False, Mixed, Uncertain), "
+                    "score (0-100 integer), and bullets (list of short strings)."
                 ),
             },
             {
@@ -55,8 +54,8 @@ async def analyze_with_llm(prompt: str) -> Dict:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(url, headers=headers, json=body)
+        with httpx.Client(timeout=20) as client:
+            resp = client.post(url, headers=headers, json=body)
     except Exception as e:
         return {
             "verdict": "Uncertain",
@@ -65,23 +64,25 @@ async def analyze_with_llm(prompt: str) -> Dict:
         }
 
     if resp.status_code != 200:
+        text = ""
         try:
-            err_text = resp.text
+            text = resp.text
         except Exception:
-            err_text = f"HTTP {resp.status_code}"
+            text = f"HTTP {resp.status_code}"
         return {
             "verdict": "Uncertain",
             "score": 45,
             "bullets": [
                 "Groq API returned an error.",
                 f"Status: {resp.status_code}",
-                f"Details: {err_text[:200]}",
+                f"Details: {text[:200]}",
             ],
         }
 
     data = resp.json()
     content = data["choices"][0]["message"]["content"].strip()
 
+    # Try to parse JSON from the model content
     try:
         parsed = json.loads(content)
         verdict = str(parsed.get("verdict", "Uncertain"))
@@ -90,6 +91,7 @@ async def analyze_with_llm(prompt: str) -> Dict:
         if not isinstance(bullets, list):
             bullets = [str(bullets)]
     except Exception:
+        # Model didn't strictly follow JSON; still return something
         verdict = "Uncertain"
         score = 50
         bullets = [content]

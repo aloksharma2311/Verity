@@ -1,66 +1,85 @@
-from typing import Dict, Any
+# backend/app/ai_agent.py
 
-from .gnews_client import search_news
+from typing import Dict, Any, List
+
 from .llm_client import analyze_with_llm
+from .gnews_client import fetch_related_news
 
 
-async def verify_claim(text: str) -> Dict[str, Any]:
+def _build_prompt_for_claim(claim_text: str, articles: List[Dict[str, Any]]) -> str:
     """
-    Main verification pipeline:
-    1. Search related articles via GNews.
-    2. Build a context summary.
-    3. Ask LLM (Groq) for verdict, score, and bullets.
+    Build the LLM prompt: includes the claim and a compact list of retrieved news articles.
     """
+    lines = []
+    lines.append("You are a news verification AI agent.")
+    lines.append("Task: Decide if the given claim is True, False, Mixed, or Uncertain.")
+    lines.append("")
+    lines.append("Claim to check:")
+    lines.append(claim_text.strip())
+    lines.append("")
+    lines.append("Related news articles (from GNews):")
 
-    # 1) Get news from GNews
+    if not articles:
+        lines.append("- (No related news articles found.)")
+    else:
+        for idx, art in enumerate(articles[:5], start=1):
+            lines.append(
+                f"- [{idx}] {art.get('title','')} "
+                f"(source={art.get('source','')}, published_at={art.get('published_at','')})"
+            )
+
+    lines.append("")
+    lines.append(
+        "Use ONLY this information and your general world knowledge up to now. "
+        "Output STRICTLY a JSON object with keys: verdict (True/False/Mixed/Uncertain), "
+        "score (0-100 integer, higher=more confident), and bullets (array of short explanation strings)."
+    )
+
+    return "\n".join(lines)
+
+
+def verify_text_claim(text: str) -> Dict[str, Any]:
+    """
+    Main function used by the chatbot: verifies a text claim/headline.
+    Returns dict: { verdict, score, bullets, articles }
+    """
+    claim = text.strip()
+    if not claim:
+        return {
+            "verdict": "Uncertain",
+            "score": 0,
+            "bullets": ["Empty claim provided."],
+            "articles": [],
+        }
+
+    # 1) Fetch related news
+    articles = fetch_related_news(claim)
+
+    # 2) Build prompt for LLM
+    prompt = _build_prompt_for_claim(claim, articles)
+
+    # 3) Call LLM
+    llm_result = analyze_with_llm(prompt)
+
+    verdict = str(llm_result.get("verdict", "Uncertain"))
     try:
-        news_json = await search_news(text)
-        articles = news_json.get("articles", [])
-    except Exception as e:
-        # If GNews fails, still let LLM handle it
-        articles = []
-        gnews_error = str(e)
-    else:
-        gnews_error = None
+        score = int(llm_result.get("score", 50))
+    except Exception:
+        score = 50
+    bullets = llm_result.get("bullets", [])
+    if not isinstance(bullets, list):
+        bullets = [str(bullets)]
 
-    # 2) Build article summary for the LLM
-    if articles:
-        article_summaries = "\n".join(
-            f"- {a.get('title')} ({a.get('source', {}).get('name')}): "
-            f"{a.get('description')}"
-            for a in articles
-        )
-    else:
-        article_summaries = "No related articles were found via GNews."
+    return {
+        "verdict": verdict,
+        "score": score,
+        "bullets": bullets,
+        "articles": articles,
+    }
 
-    # 3) Build prompt for LLM
-    prompt = f"""
-Claim:
-{text}
 
-Related news context from GNews:
-{article_summaries}
-
-Task:
-Based on the claim and the news context:
-1. Decide if the claim is True, False, Mixed, or Uncertain.
-2. Give a confidence score between 0 and 100.
-3. Provide 2–4 short bullet-point explanations.
-
-Return ONLY a JSON object with this structure:
-{{
-  "verdict": "True | False | Mixed | Uncertain",
-  "score": 0-100,
-  "bullets": ["...", "..."]
-}}
-"""
-
-    # 4) Ask LLM
-    llm_result = await analyze_with_llm(prompt)
-
-    # Attach some debug info (optional)
-    llm_result["article_count"] = len(articles)
-    if gnews_error:
-        llm_result["gnews_error"] = gnews_error
-
-    return llm_result
+def verify_claim(text: str) -> Dict[str, Any]:
+    """
+    Compatibility wrapper for /news/upload if it imports verify_claim().
+    """
+    return verify_text_claim(text)

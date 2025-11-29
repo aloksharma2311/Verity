@@ -1,0 +1,50 @@
+name: verity
+description: "Verity - AI-powered misinformation detection app for MumbaiHacks."
+publish_to: "none"
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.6
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Networking (API calls)
+  dio: ^5.7.0
+
+  # Secure token storage
+  flutter_secure_storage: ^9.2.2
+
+  # Upload media
+  image_picker: ^1.1.1
+  video_player: ^2.8.6
+
+  # JSON serialization (optional but recommended)
+  collection: ^1.18.0
+
+  # Smooth UI animations
+  flutter_animate: ^4.5.0
+
+  # For persistent local caching (optional but useful for feed)
+  shared_preferences: ^2.3.2
+
+  uuid: ^4.5.0
+  
+  equatable: ^2.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/

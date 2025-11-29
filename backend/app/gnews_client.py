@@ -1,23 +1,56 @@
+# backend/app/gnews_client.py
+
 import os
+from typing import List, Dict, Any
+
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-
-if not GNEWS_API_KEY:
-    raise RuntimeError("GNEWS_API_KEY is not set in .env")
+GNEWS_BASE_URL = "https://gnews.io/api/v4/search"
 
 
-async def search_news(query: str) -> dict:
-    url = "https://gnews.io/api/v4/search"
+def fetch_related_news(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """
+    Simple wrapper around GNews /search endpoint.
+    Returns a list of normalized article dicts.
+    If key missing or network fails, returns [].
+    """
+    if not GNEWS_API_KEY:
+        return []
+
     params = {
         "q": query,
         "lang": "en",
-        "max": 5,
-        "apikey": GNEWS_API_KEY,  # important: 'apikey'
+        "country": "in",  # you can tweak later
+        "max": max_results,
+        "apikey": GNEWS_API_KEY,
     }
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(url, params=params)
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(GNEWS_BASE_URL, params=params)
+    except Exception:
+        return []
 
-    resp.raise_for_status()
-    return resp.json()
+    if resp.status_code != 200:
+        return []
+
+    data = resp.json()
+    articles = data.get("articles", []) or []
+
+    normalized = []
+    for a in articles:
+        normalized.append(
+            {
+                "title": a.get("title", ""),
+                "description": a.get("description", ""),
+                "url": a.get("url", ""),
+                "source": (a.get("source") or {}).get("name", ""),
+                "published_at": a.get("publishedAt", ""),
+            }
+        )
+
+    return normalized
